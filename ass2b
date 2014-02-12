@@ -23,7 +23,7 @@ RT_MUTEX accelerometer_mutex;
 RT_MUTEX fusion_mutex;
 
 int gyro_ring[ring_size],log_array[array_size];
-int gyro_log[ring_size][5],accel_log[array_size];
+int gyro_log[array_size][ring_size],accel_log[array_size];
 int ring_index,log_index;
 int accelerometer_val,fusion_average;
 int is_running;
@@ -78,7 +78,6 @@ void fusion(){
 		rt_mutex_acquire(&accelerometer_mutex, TM_INFINITE);
 			memcpy(&fusion_gyro_ring, &gyro_ring, sizeof(gyro_ring));
 			accel=accelerometer_val;
-
 		rt_mutex_release(&accelerometer_mutex);
 		rt_mutex_release(&ring_mutex);
 
@@ -128,11 +127,11 @@ int main()
 
 	int n,z;
 	for(n=0;n<array_size;n++){
-		rt_printf("Fusion: %d \n",log_array[n]);
 		for(z=0;z<5;z++){
 		rt_printf("Gyro: %d \n",gyro_log[n][z]);
 		}
 		rt_printf("Accelerometer: %d",accel_log[n]);
+		rt_printf("Fusion: %d \n",log_array[n]);
 		rt_printf("\n");
 	}
 
