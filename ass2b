@@ -1,0 +1,139 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <time.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <signal.h>
+
+#include <native/task.h>
+#include <native/timer.h>
+#include <rtdk.h>
+#include <native/mutex.h>
+
+#define ring_size 5
+#define array_size 20
+
+RT_TASK gyro_task;
+RT_TASK accelerometer_task;
+RT_TASK fusion_task;
+RT_MUTEX ring_mutex;
+RT_MUTEX accelerometer_mutex;
+RT_MUTEX fusion_mutex;
+
+int gyro_ring[ring_size],log_array[array_size];
+int gyro_log[ring_size][5],accel_log[array_size];
+int ring_index,log_index;
+int accelerometer_val,fusion_average;
+int is_running;
+
+//ASSUMING 3GHz PROCESSOR CLOCK SPEED
+void gyro(){
+	rt_task_set_periodic(NULL,TM_NOW,3333333);
+	srand(time(NULL));
+	int i;
+	while (is_running){	
+	for (i=0;i<ring_size;i++){
+		//polling at 300Hz
+		//rt_task_sleep(10000000);
+		rt_task_wait_period(NULL);
+		rt_mutex_acquire(&ring_mutex, TM_INFINITE);
+			gyro_ring[ring_index] = (rand() % 360);
+			ring_index ++;		
+		rt_mutex_release(&ring_mutex);
+	}//end for
+	ring_index=0;
+	}//end while
+}
+
+void accelerometer(){
+	rt_task_set_periodic(NULL,TM_NOW,33333333);
+	srand(time(NULL));
+	int i;
+	while (is_running){
+		//polling at 30Hz
+		//rt_task_sleep(100000000);
+		rt_task_wait_period(NULL);
+		rt_mutex_acquire(&accelerometer_mutex, TM_INFINITE);
+			accelerometer_val = rand() % 10;
+		rt_mutex_release(&accelerometer_mutex);
+	}//endwhile
+}//end accelerator
+
+void fusion(){
+	rt_task_set_periodic(NULL,TM_NOW,16666666);
+	int fusion_gyro_ring[ring_size];
+	int accel=0,i=0,k=0;
+	int fusion_sum=0,gyro_average=0;
+	for (k=0;k<array_size;k++){
+	fusion_sum=0;
+	gyro_average=0;
+	fusion_average = 0;
+	//polling at 60Hz
+		//rt_task_sleep(50000000);
+		rt_task_wait_period(NULL);
+		//Assumption-both mutexes are held, so that the data in both protected memory locations is current
+		rt_mutex_acquire(&ring_mutex, TM_INFINITE);
+		rt_mutex_acquire(&accelerometer_mutex, TM_INFINITE);
+			memcpy(&fusion_gyro_ring, &gyro_ring, sizeof(gyro_ring));
+			accel=accelerometer_val;
+
+		rt_mutex_release(&accelerometer_mutex);
+		rt_mutex_release(&ring_mutex);
+
+		//logging values and
+		//processing the data
+		for (i=0; i<ring_size; i++){
+			fusion_sum=fusion_sum+fusion_gyro_ring[i];
+			gyro_log[k][i]=fusion_gyro_ring[i];
+		}
+		accel_log[k]=accel;
+		gyro_average = fusion_sum/ring_size;
+		rt_mutex_acquire(&fusion_mutex, TM_INFINITE);
+			fusion_average = (accel + gyro_average)/2;
+			log_array[k]=fusion_average;
+		rt_mutex_release(&fusion_mutex);
+	}//endfor
+	is_running = 0;
+}
+
+int main()
+{
+	int status_fusion,status_accel,status_gyro,x,count;
+	is_running=1;
+
+	rt_print_auto_init(1);
+	rt_mutex_create(&fusion_mutex,"fusion_mutex");
+	rt_mutex_create(&ring_mutex,"ring_mutex");
+	rt_mutex_create(&accelerometer_mutex,"accelerometer_mutex");
+	
+        mlockall(MCL_CURRENT|MCL_FUTURE);
+
+        status_accel = rt_task_create(&accelerometer_task, NULL, 0, 0, T_JOINABLE);
+        status_gyro = rt_task_create(&gyro_task, NULL, 0, 0, T_JOINABLE);
+        status_fusion = rt_task_create(&fusion_task, NULL, 0, 0, T_JOINABLE);
+
+        status_accel = rt_task_start(&accelerometer_task, &accelerometer, NULL);
+	status_gyro = rt_task_start(&gyro_task, &gyro, NULL);
+	status_fusion = rt_task_start(&fusion_task, &fusion, NULL);
+
+        status_accel = rt_task_join(&accelerometer_task);
+	status_gyro = rt_task_join(&gyro_task);
+	status_fusion = rt_task_join(&fusion_task);
+
+	rt_mutex_delete(&fusion_mutex);
+	rt_mutex_delete(&ring_mutex);
+	rt_mutex_delete(&accelerometer_mutex);
+
+	int n,z;
+	for(n=0;n<array_size;n++){
+		rt_printf("Fusion: %d \n",log_array[n]);
+		for(z=0;z<5;z++){
+		rt_printf("Gyro: %d \n",gyro_log[n][z]);
+		}
+		rt_printf("Accelerometer: %d",accel_log[n]);
+		rt_printf("\n");
+	}
+
+}
